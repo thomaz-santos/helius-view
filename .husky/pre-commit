@@ -1,0 +1,2 @@
+npm run typecheck --if-present
+npm test --if-present
