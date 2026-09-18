@@ -12,6 +12,10 @@ export interface FileChange {
 export type AnalyzerRequest =
   | { id: number; type: 'ping' }
   | { id: number; type: 'graph' }
+  // grafo de nível 1 ATUAL (depois de atualizações ao vivo, etapa 5), sem re-escanear o
+  // disco; usado por GET /api/graph pra nunca devolver o snapshot congelado da subida do
+  // servidor. Só faz sentido depois que 'graph' já rodou pelo menos uma vez.
+  | { id: number; type: 'currentGraph' }
   | { id: number; type: 'symbols'; file: string }
   | { id: number; type: 'symbol'; symbolId: string }
   | { id: number; type: 'search'; query: string }

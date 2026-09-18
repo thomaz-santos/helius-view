@@ -45,9 +45,16 @@ export async function startServer(root: string, port: number, exclude: string[] 
 
   app.get('/api/ping', async (c) => c.json(await analyzer.request<PingResult>({ type: 'ping' })))
 
-  // dispara a análise assim que o servidor sobe; GET /api/graph e /ws reaproveitam a mesma
+  // dispara a análise assim que o servidor sobe; /ws reaproveita essa mesma promise (abaixo)
   const graphPromise = analyzer.request<Graph>({ type: 'graph' })
-  app.get('/api/graph', async (c) => c.json(await graphPromise))
+  // /api/graph NÃO devolve graphPromise direto: isso serviria pra sempre o snapshot da
+  // subida do servidor, mesmo depois de atualizações ao vivo (etapa 5) — currentGraph lê o
+  // LiveGraphState atual da worker (populado assim que graphPromise resolve, então aguardar
+  // ela primeiro garante que currentGraph já tem o que ler, sem re-escanear o disco à toa).
+  app.get('/api/graph', async (c) => {
+    await graphPromise
+    return c.json(await analyzer.request<Graph>({ type: 'currentGraph' }))
+  })
 
   // nível 2, sob demanda (decisão 2). O worker valida caminho/id contra a raiz e o
   // conjunto descoberto (segurança); aqui só convertemos a rejeição em 400.

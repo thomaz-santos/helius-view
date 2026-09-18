@@ -62,6 +62,9 @@ function handle(req: AnalyzerRequest): unknown {
       return result.graph satisfies Graph
     }
 
+    case 'currentGraph':
+      return (liveState ? graphOf(liveState) : { nodes: [], links: [] }) satisfies Graph
+
     case 'symbols': {
       if (!discoveryState) return { nodes: [], links: [] } satisfies Graph
       const abs = resolveDiscoveredFile(root, req.file, discoveryState.discovered)
