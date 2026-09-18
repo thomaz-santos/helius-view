@@ -7,6 +7,7 @@ import { createNodeWebSocket } from '@hono/node-ws'
 import { startAnalyzer } from './analyzer'
 import type { PingResult, ProgressEvent } from '../shared/protocol'
 import type { Graph } from '../shared/graph'
+import type { SearchResult, SymbolDetail } from '../shared/symbol'
 
 const MAX_PORT_TRIES = 10
 
@@ -46,6 +47,29 @@ export async function startServer(root: string, port: number, exclude: string[] 
   // dispara a análise assim que o servidor sobe; GET /api/graph e /ws reaproveitam a mesma
   const graphPromise = analyzer.request<Graph>({ type: 'graph' })
   app.get('/api/graph', async (c) => c.json(await graphPromise))
+
+  // nível 2, sob demanda (decisão 2). O worker valida caminho/id contra a raiz e o
+  // conjunto descoberto (segurança); aqui só convertemos a rejeição em 400.
+  app.get('/api/symbols', async (c) => {
+    try {
+      return c.json(await analyzer.request<Graph>({ type: 'symbols', file: c.req.query('file') ?? '' }))
+    } catch (e) {
+      return c.json({ error: String(e) }, 400)
+    }
+  })
+
+  app.get('/api/symbol', async (c) => {
+    try {
+      const detail = await analyzer.request<SymbolDetail | undefined>({ type: 'symbol', symbolId: c.req.query('id') ?? '' })
+      return detail ? c.json(detail) : c.json({ error: 'símbolo não encontrado' }, 404)
+    } catch (e) {
+      return c.json({ error: String(e) }, 400)
+    }
+  })
+
+  app.get('/api/search', async (c) =>
+    c.json(await analyzer.request<SearchResult[]>({ type: 'search', query: c.req.query('q') ?? '' })),
+  )
 
   // último evento de progresso, pra quem conectar no WS depois da análise já ter avançado
   let lastProgress: ProgressEvent | undefined

@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads'
-import type { AnalyzerRequest, ProgressEvent, WorkerMessage } from '../shared/protocol'
+import type { AnalyzerRequestBody, ProgressEvent, WorkerMessage } from '../shared/protocol'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void }
 
@@ -28,7 +28,7 @@ export function startAnalyzer(root: string, exclude: string[] = []) {
   worker.unref()
 
   return {
-    request<T>(req: Omit<AnalyzerRequest, 'id'>): Promise<T> {
+    request<T>(req: AnalyzerRequestBody): Promise<T> {
       const id = nextId++
       return new Promise<T>((resolve, reject) => {
         pending.set(id, { resolve: resolve as (v: unknown) => void, reject })
