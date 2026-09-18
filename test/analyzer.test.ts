@@ -4,7 +4,7 @@ import { analyze } from '../src/analyzer/graph'
 import { discoverFiles } from '../src/analyzer/discover'
 
 const fixture = (name: string) => path.join(import.meta.dirname, 'fixtures', name)
-const run = (name: string) => analyze(fixture(name), [], () => {})
+const run = (name: string) => analyze(fixture(name), [], () => {}).graph
 
 function link(graph: ReturnType<typeof run>, from: string, to: string) {
   return graph.links.find((l) => l.source === from && l.target === to)

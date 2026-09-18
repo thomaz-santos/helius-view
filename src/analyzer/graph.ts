@@ -1,14 +1,20 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { ts } from 'ts-morph'
-import { discoverFiles, nearestTsconfig } from './discover'
+import { discoverFiles, nearestTsconfig, type TsConfigInfo } from './discover'
 import { extractImports, resolveImport, packageNameFromSpecifier, DEFAULT_OPTIONS, type RawImport } from './imports'
 import type { Graph, GraphNode, GraphLink } from '../shared/graph'
 import type { ProgressEvent } from '../shared/protocol'
 
 const toId = (root: string, abs: string) => path.relative(root, abs).split(path.sep).join('/')
 
-export function analyze(root: string, exclude: string[], emit: (e: ProgressEvent) => void): Graph {
+export interface AnalyzeResult {
+  graph: Graph
+  files: string[]
+  tsconfigs: TsConfigInfo[]
+}
+
+export function analyze(root: string, exclude: string[], emit: (e: ProgressEvent) => void): AnalyzeResult {
   const { files, tsconfigs, warning } = discoverFiles(root, exclude)
   emit({ event: 'progress', phase: 'discover', count: files.length, warning })
 
@@ -55,7 +61,7 @@ export function analyze(root: string, exclude: string[], emit: (e: ProgressEvent
 
   const graph: Graph = { nodes: [...nodes.values()], links }
   emit({ event: 'progress', phase: 'done', nodes: graph.nodes.length, links: graph.links.length })
-  return graph
+  return { graph, files, tsconfigs }
 }
 
 function toLink(
