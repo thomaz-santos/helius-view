@@ -102,20 +102,31 @@ export function GraphView({ graph, folderColors, selected, highlightSet, onSelec
     }
   }, [])
 
-  // ponytail: graphData() substitui os objetos de nó, então o d3-force reseta a posição
-  // (perde x/y anteriores) a cada mudança de filtro/seleção/destaque, não só de dados.
-  // Upgrade: mesclar por id preservando x/y dos nós que continuam existindo.
+  // dados: só quando o grafo muda (filtro, colapso, patch). Nós que continuam existindo
+  // herdam posição e velocidade por id, pra o layout não embaralhar a cada atualização.
+  useEffect(() => {
+    const fg = fgRef.current
+    if (!fg) return
+    countsRef.current = dependentCounts(graph.links)
+    const prev = new Map(fg.graphData().nodes.map((n) => [String(n.id), n]))
+    const nodes = graph.nodes.map((n) => {
+      const p = prev.get(n.id)
+      return p ? { ...n, x: p.x, y: p.y, vx: p.vx, vy: p.vy } : { ...n }
+    })
+    const links = graph.links.map((l) => ({ ...l }))
+    fg.graphData({ nodes, links })
+  }, [graph])
+
+  // seleção e destaque são só pintura: atualiza as refs e re-registra o accessor pra
+  // forçar o redesenho, sem tocar em graphData (e portanto sem mexer na simulação)
   useEffect(() => {
     const fg = fgRef.current
     if (!fg) return
     folderColorsRef.current = folderColors
     selectedRef.current = selected
     highlightRef.current = highlightSet
-    countsRef.current = dependentCounts(graph.links)
-    const nodes = graph.nodes.map((n) => ({ ...n }))
-    const links = graph.links.map((l) => ({ ...l }))
-    fg.graphData({ nodes, links })
-  }, [graph, selected, highlightSet, folderColors])
+    fg.nodeColor(fg.nodeColor()).linkColor(fg.linkColor())
+  }, [selected, highlightSet, folderColors])
 
   useEffect(() => {
     const fg = fgRef.current
