@@ -10,6 +10,7 @@ const { values, positionals } = parseArgs({
   options: {
     port: { type: 'string', short: 'p', default: '4317' },
     'no-open': { type: 'boolean', default: false },
+    exclude: { type: 'string', multiple: true, default: [] },
   },
 })
 
@@ -38,7 +39,7 @@ function openBrowser(url: string) {
     .unref()
 }
 
-const port = await startServer(root, wanted)
+const port = await startServer(root, wanted, values.exclude as string[])
 const url = `http://127.0.0.1:${port}`
 if (port !== wanted) console.log(`porta ${wanted} ocupada, usando ${port}`)
 console.log(`helius: ${root}\n${url}`)
