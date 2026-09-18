@@ -21,17 +21,41 @@ export interface DiscoverResult {
 
 const normKey = (p: string) => path.resolve(p).replace(/\\/g, '/').toLowerCase()
 
-function parseTsconfig(configPath: string): TsConfigInfo | undefined {
+// tsconfig "solution" (files: [], references: [...], padrão do Vite) não tem fileNames
+// próprio: os arquivos reais estão nos configs referenciados (tsconfig.app.json etc).
+// Eles contam como configs do MESMO diretório do config que os referencia, não do seu
+// próprio diretório — por isso `dir` é passado explicitamente na recursão.
+function parseTsconfig(configPath: string, dir: string = path.dirname(configPath)): TsConfigInfo[] {
   const read = ts.readConfigFile(configPath, ts.sys.readFile)
-  if (read.error) return undefined
-  const dir = path.dirname(configPath)
-  const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, dir)
-  return { dir, options: parsed.options, fileNames: new Set(parsed.fileNames.map(normKey)) }
+  if (read.error) return []
+  const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, path.dirname(configPath))
+
+  const result: TsConfigInfo[] = []
+  if (parsed.fileNames.length) {
+    result.push({ dir, options: parsed.options, fileNames: new Set(parsed.fileNames.map(normKey)) })
+  }
+  for (const ref of parsed.projectReferences ?? []) {
+    result.push(...parseTsconfig(ts.resolveProjectReferencePath(ref), dir))
+  }
+  return result
 }
 
-// tsconfig mais próximo de `file`, entre os descobertos no repo (decisão 9)
-function nearestTsconfig(file: string, tsconfigs: TsConfigInfo[]): TsConfigInfo | undefined {
-  return tsconfigs.find((c) => file === c.dir || file.startsWith(c.dir + path.sep))
+export type ConfigLookup =
+  | { status: 'included'; config: TsConfigInfo }
+  | { status: 'excluded' }
+  | { status: 'no-config' }
+
+// tsconfig mais próximo de `file`, entre os descobertos no repo (decisão 9). Um diretório
+// pode ter mais de um config (solution style); o arquivo entra se ALGUM deles o incluir.
+function nearestTsconfig(file: string, tsconfigs: TsConfigInfo[]): ConfigLookup {
+  let nearestDir: string | undefined
+  for (const c of tsconfigs) {
+    if (file !== c.dir && !file.startsWith(c.dir + path.sep)) continue
+    if (nearestDir !== undefined && c.dir !== nearestDir) break // já passou do diretório mais próximo
+    nearestDir = c.dir
+    if (c.fileNames.has(normKey(file))) return { status: 'included', config: c }
+  }
+  return nearestDir === undefined ? { status: 'no-config' } : { status: 'excluded' }
 }
 
 export function discoverFiles(root: string, excludePatterns: string[]): DiscoverResult {
@@ -68,16 +92,12 @@ export function discoverFiles(root: string, excludePatterns: string[]): Discover
   walk(root)
 
   // mais profundo primeiro, para achar o tsconfig mais próximo de cada arquivo
-  const tsconfigs = tsconfigPaths
-    .map(parseTsconfig)
-    .filter((c): c is TsConfigInfo => c !== undefined)
-    .sort((a, b) => b.dir.length - a.dir.length)
+  const tsconfigs = tsconfigPaths.flatMap((p) => parseTsconfig(p)).sort((a, b) => b.dir.length - a.dir.length)
 
   const files = candidates.filter((file) => {
-    const config = nearestTsconfig(file, tsconfigs)
-    // sem tsconfig cobrindo o arquivo: entra (JS puro). Com tsconfig: só entra se o
-    // include/exclude dele aceitar o arquivo.
-    return !config || config.fileNames.has(normKey(file))
+    // sem tsconfig cobrindo o arquivo: entra (JS puro). Com tsconfig: só entra se algum
+    // config do diretório mais próximo aceitar o arquivo.
+    return nearestTsconfig(file, tsconfigs).status !== 'excluded'
   })
 
   const warning =

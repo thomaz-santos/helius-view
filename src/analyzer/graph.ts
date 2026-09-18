@@ -25,7 +25,8 @@ export function analyze(root: string, exclude: string[], emit: (e: ProgressEvent
   let done = 0
   for (const abs of files) {
     const fromId = toId(root, abs)
-    const options = nearestTsconfig(abs, tsconfigs)?.options ?? DEFAULT_OPTIONS
+    const lookup = nearestTsconfig(abs, tsconfigs)
+    const options = lookup.status === 'included' ? lookup.config.options : DEFAULT_OPTIONS
 
     let source: string
     try {
@@ -37,7 +38,7 @@ export function analyze(root: string, exclude: string[], emit: (e: ProgressEvent
 
     for (const imp of extractImports(source)) {
       const resolved = resolveImport(imp.specifier, abs, options)
-      const link = toLink(root, fromId, imp, resolved, nodes)
+      const link = toLink(root, fromId, imp, resolved, options, nodes)
       links.push(link)
       if (!link.unresolved && nodes.get(link.target)?.kind === 'file') {
         fileEdges.push({ from: fromId, to: link.target })
@@ -62,6 +63,7 @@ function toLink(
   fromId: string,
   imp: RawImport,
   resolved: ts.ResolvedModuleWithFailedLookupLocations,
+  options: ts.CompilerOptions,
   nodes: Map<string, GraphNode>,
 ): GraphLink {
   const mod = resolved.resolvedModule
@@ -74,15 +76,25 @@ function toLink(
     return { source: fromId, target: targetId, kind: imp.kind }
   }
 
-  // não resolveu pelo TS: specifier "nu" (não relativo) ainda vira pacote externo
-  // (cobre builtins do node, que não têm arquivo pra resolver)
-  if (!imp.specifier.startsWith('.') && !path.isAbsolute(imp.specifier)) {
+  const bare = !imp.specifier.startsWith('.') && !path.isAbsolute(imp.specifier)
+  // specifier que bate com um alias do tsconfig (ex.: "@/x") mas não resolveu: é um alias
+  // quebrado, não um pacote externo — vira unresolved em vez de esconder o problema num pkg:
+  if (bare && !matchesPathAlias(imp.specifier, options)) {
     return { source: fromId, target: packageNode(nodes, packageNameFromSpecifier(imp.specifier)), kind: imp.kind }
   }
 
   const targetId = `unresolved:${fromId}:${imp.specifier}`
   if (!nodes.has(targetId)) nodes.set(targetId, { id: targetId, kind: 'file', name: imp.specifier })
   return { source: fromId, target: targetId, kind: imp.kind, unresolved: true }
+}
+
+function matchesPathAlias(specifier: string, options: ts.CompilerOptions): boolean {
+  if (!options.paths) return false
+  for (const key of Object.keys(options.paths)) {
+    const prefix = key.slice(0, key.indexOf('*'))
+    if (key.includes('*') ? specifier.startsWith(prefix) : specifier === key) return true
+  }
+  return false
 }
 
 function packageNode(nodes: Map<string, GraphNode>, name: string): string {
@@ -109,6 +121,9 @@ function markCircular(fileEdges: { from: string; to: string }[], links: GraphLin
   const sccSize = new Map<number, number>()
   let sccCount = 0
 
+  // ponytail: strongconnect é recursivo (uma chamada por nó no grafo de arquivos); uma
+  // cadeia de imports muito profunda pode estourar a pilha. Upgrade: Tarjan iterativo
+  // (pilha explícita) se isso aparecer em repositórios reais.
   function strongconnect(v: string) {
     indices.set(v, index)
     low.set(v, index)
