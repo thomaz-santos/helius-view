@@ -1,16 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { Graph, GraphLink, GraphNode } from '../../src/shared/graph'
 import type { GraphPatch, ProgressEvent } from '../../src/shared/protocol'
 import type { SymbolDetail } from '../../src/shared/symbol'
 import { GraphView } from './GraphView'
 import { FolderTree } from './FolderTree'
+import { PathPanel } from './PathPanel'
 import { SearchPalette } from './SearchPalette'
 import { SymbolPanel } from './SymbolPanel'
 import { buildTree, folderColorMap, isPathVisible, toggleFolder } from './lib/tree'
 import { collapseGraph, effectiveNodeId, filterGraph } from './lib/collapse'
 import { neighborhood } from './lib/neighborhood'
 import { applyGraphPatch } from './lib/patch'
+import { pathLinkKeySet, shortestPath } from './lib/path'
 import { parseUrlState, serializeUrlState, type UrlState } from './lib/url'
+
+// etapa 6(a): three.js só entra no bundle de quem liga o modo 3D (import() dinâmico)
+const GraphView3D = lazy(() => import('./GraphView3D').then((m) => ({ default: m.GraphView3D })))
 
 const RECONNECT_BASE_MS = 500
 const RECONNECT_MAX_MS = 10_000
@@ -24,11 +29,14 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
   const [urlState, setUrlState] = useState<UrlState>(() => parseUrlState(location.search))
   const [searchOpen, setSearchOpen] = useState(false)
+  // etapa 6(b): a busca também serve pra escolher o destino de "caminho até…" (Ctrl+K normal
+  // segue selecionando um nó; nesse modo o resultado vira pathTo em vez de sel)
+  const [searchMode, setSearchMode] = useState<'select' | 'path-to'>('select')
   const [showTypes, setShowTypes] = useState(false)
   const [symbolDetail, setSymbolDetail] = useState<SymbolDetail | null>(null)
   const [liveWarning, setLiveWarning] = useState<string | null>(null)
 
-  const { sel: selected, externos: showExternal, depth, isolate } = urlState
+  const { sel: selected, externos: showExternal, depth, isolate, mode, pathFrom, pathTo, pathUndirected } = urlState
   const uncheckedFolders = useMemo(() => new Set(urlState.unchecked), [urlState.unchecked])
   const collapsedFolders = useMemo(() => new Set(urlState.collapsed), [urlState.collapsed])
 
@@ -227,10 +235,33 @@ export function App() {
 
   const effectiveSelected = selected ? effectiveNodeId(selected, collapsedFolders) : undefined
   const selectedNode = graph?.nodes.find((n) => n.id === effectiveSelected)
+
+  // etapa 6(b): caminho entre dois nós — BFS pura sobre o grafo carregado (não o filtrado/
+  // colapsado: origem/destino vêm da busca ou de um clique, sempre com o id "real")
+  const pathActive = Boolean(pathFrom && pathTo)
+  const pathResult = useMemo(() => {
+    if (!pathActive || !graph) return null
+    return shortestPath(graph.links, pathFrom!, pathTo!, pathUndirected)
+  }, [pathActive, graph, pathFrom, pathTo, pathUndirected])
+  const pathNodeSet = useMemo(() => (pathResult ? new Set(pathResult.nodes) : null), [pathResult])
+  const pathLinkKeys = useMemo(() => pathLinkKeySet(pathResult), [pathResult])
+
   const highlightSet = useMemo(() => {
+    if (pathActive) return pathNodeSet
     if (!renderGraph || !effectiveSelected || isolate) return null
     return neighborhood(renderGraph.links, effectiveSelected, depth)
-  }, [renderGraph, effectiveSelected, isolate, depth])
+  }, [pathActive, pathNodeSet, renderGraph, effectiveSelected, isolate, depth])
+
+  const startPath = (toId: string) => {
+    if (!selected) return
+    setUrl({ pathFrom: selected, pathTo: toId })
+  }
+  const clearPath = () => setUrl({ pathFrom: undefined, pathTo: undefined })
+  // shift+clique escolhe o destino direto, sem abrir a busca (decisão do plano pra etapa 6)
+  const onShiftSelect = (id: string) => {
+    if (selected && selected !== id) startPath(id)
+    else select(id)
+  }
 
   // painel de símbolo: busca os cinco blocos quando o selecionado é um id de símbolo
   // (caminho#nome) — verifica pelo formato do id, não pelo nó já estar no grafo atual, pra
@@ -287,6 +318,33 @@ export function App() {
         <button onClick={() => setSearchOpen(true)} style={{ background: '#1a2230', color: '#e2e8f0', border: '1px solid #263041', borderRadius: 4, padding: '2px 8px' }}>
           Ctrl+K buscar
         </button>
+        <div style={{ display: 'flex', border: '1px solid #263041', borderRadius: 4, overflow: 'hidden' }}>
+          {(['2d', '3d'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setUrl({ mode: m })}
+              style={{
+                background: mode === m ? '#1e3a5f' : '#1a2230',
+                color: '#e2e8f0',
+                border: 'none',
+                padding: '2px 10px',
+                cursor: 'pointer',
+              }}
+            >
+              {m.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => {
+            setSearchMode('path-to')
+            setSearchOpen(true)
+          }}
+          disabled={!selected}
+          style={{ background: '#1a2230', color: '#e2e8f0', border: '1px solid #263041', borderRadius: 4, padding: '2px 8px' }}
+        >
+          caminho até… <span style={{ color: '#6b7280' }}>(ou shift+clique)</span>
+        </button>
         {graph && renderGraph && (
           <span>
             {renderGraph.nodes.length}/{graph.nodes.length} nós, {renderGraph.links.length} arestas
@@ -327,16 +385,32 @@ export function App() {
           </div>
         </aside>
         <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-          {renderGraph && (
-            <GraphView
-              graph={renderGraph}
-              folderColors={folderColors}
-              selected={effectiveSelected}
-              highlightSet={highlightSet}
-              onSelect={select}
-              onExpandFile={expandFile}
-            />
-          )}
+          {renderGraph &&
+            (mode === '3d' ? (
+              <Suspense fallback={<div style={{ padding: 12, color: '#6b7280' }}>carregando 3D…</div>}>
+                <GraphView3D
+                  graph={renderGraph}
+                  folderColors={folderColors}
+                  selected={effectiveSelected}
+                  highlightSet={highlightSet}
+                  onSelect={select}
+                  onExpandFile={expandFile}
+                  pathLinkKeys={pathLinkKeys}
+                  onShiftSelect={onShiftSelect}
+                />
+              </Suspense>
+            ) : (
+              <GraphView
+                graph={renderGraph}
+                folderColors={folderColors}
+                selected={effectiveSelected}
+                highlightSet={highlightSet}
+                onSelect={select}
+                onExpandFile={expandFile}
+                pathLinkKeys={pathLinkKeys}
+                onShiftSelect={onShiftSelect}
+              />
+            ))}
         </div>
         {selectedNode?.kind === 'file' && selectedNode.file && (
           <aside style={{ width: 260, flexShrink: 0, borderLeft: '1px solid #263041', padding: 12, fontSize: 13 }}>
@@ -354,13 +428,29 @@ export function App() {
           </aside>
         )}
         {symbolDetail && <SymbolPanel detail={symbolDetail} onNavigate={navigateTo} onClose={() => select(undefined)} />}
+        {pathActive && (
+          <PathPanel
+            from={pathFrom!}
+            to={pathTo!}
+            result={pathResult}
+            undirected={pathUndirected}
+            onToggleUndirected={(v) => setUrl({ pathUndirected: v })}
+            onNavigate={navigateTo}
+            onClose={clearPath}
+          />
+        )}
       </div>
       {searchOpen && (
         <SearchPalette
-          onClose={() => setSearchOpen(false)}
-          onSelect={(id) => {
-            select(effectiveNodeId(id, collapsedFolders))
+          onClose={() => {
             setSearchOpen(false)
+            setSearchMode('select')
+          }}
+          onSelect={(id) => {
+            if (searchMode === 'path-to') startPath(id)
+            else select(effectiveNodeId(id, collapsedFolders))
+            setSearchOpen(false)
+            setSearchMode('select')
           }}
         />
       )}
