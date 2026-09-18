@@ -27,3 +27,33 @@ export function ensureFile(absPath: string, tsconfigs: TsConfigInfo[]): SourceFi
   const posixPath = absPath.replace(/\\/g, '/')
   return project.getSourceFile(posixPath) ?? project.addSourceFileAtPath(absPath)
 }
+
+// atualização ao vivo (etapa 5): recarrega `absPath` do disco no Project em que já estiver
+// carregado, sem trocar a instância do SourceFile (o cache de símbolos guarda o nó do ts-morph
+// direto, então só refreshFromFileSystem preserva referências válidas). Não faz nada se o
+// arquivo nunca foi carregado — o próximo ensureFile o carrega já atualizado.
+export function refreshFile(absPath: string): void {
+  const posixPath = absPath.replace(/\\/g, '/')
+  for (const project of projects.values()) {
+    const sf = project.getSourceFile(posixPath)
+    if (sf) {
+      sf.refreshFromFileSystemSync()
+      return
+    }
+  }
+}
+
+// arquivo apagado: remove do Project em que estiver carregado, se algum.
+export function removeFile(absPath: string): void {
+  const posixPath = absPath.replace(/\\/g, '/')
+  for (const project of projects.values()) {
+    const sf = project.getSourceFile(posixPath)
+    if (sf) project.removeSourceFile(sf)
+  }
+}
+
+// tsconfig.json mudou: as compilerOptions cacheadas por Project podem estar erradas: descarta
+// tudo, o próximo ensureFile recria com as opções atuais (reanálise completa, etapa 5).
+export function resetProjects(): void {
+  projects.clear()
+}

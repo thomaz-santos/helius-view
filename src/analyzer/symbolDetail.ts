@@ -21,6 +21,13 @@ export function invalidateCalledByCache(changedFile: string): void {
   }
 }
 
+// reanálise completa (tsconfig.json/.gitignore mudou, etapa 5): descarta tudo de uma vez em
+// vez de recalcular quais arquivos cada entrada tocava.
+export function clearCalledByCache(): void {
+  calledByCache.clear()
+  cacheFiles.clear()
+}
+
 function findSymbolReferences(node: Node) {
   if (
     Node.isFunctionDeclaration(node) ||

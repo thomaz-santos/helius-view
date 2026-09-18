@@ -6,7 +6,7 @@ import { extractImports, resolveImport, packageNameFromSpecifier, DEFAULT_OPTION
 import type { Graph, GraphNode, GraphLink } from '../shared/graph'
 import type { ProgressEvent } from '../shared/protocol'
 
-const toId = (root: string, abs: string) => path.relative(root, abs).split(path.sep).join('/')
+export const toId = (root: string, abs: string) => path.relative(root, abs).split(path.sep).join('/')
 
 export interface AnalyzeResult {
   graph: Graph
@@ -31,21 +31,9 @@ export function analyze(root: string, exclude: string[], emit: (e: ProgressEvent
   let done = 0
   for (const abs of files) {
     const fromId = toId(root, abs)
-    const lookup = nearestTsconfig(abs, tsconfigs)
-    const options = lookup.status === 'included' ? lookup.config.options : DEFAULT_OPTIONS
-
-    let source: string
-    try {
-      source = fs.readFileSync(abs, 'utf8')
-    } catch {
-      done++
-      continue
-    }
-
-    for (const imp of extractImports(source)) {
-      const resolved = resolveImport(imp.specifier, abs, options)
-      const link = toLink(root, fromId, imp, resolved, options, nodes)
-      links.push(link)
+    const fileLinks = importLinksForFile(root, abs, tsconfigs, nodes)
+    links.push(...fileLinks)
+    for (const link of fileLinks) {
       if (!link.unresolved && nodes.get(link.target)?.kind === 'file') {
         fileEdges.push({ from: fromId, to: link.target })
       }
@@ -62,6 +50,24 @@ export function analyze(root: string, exclude: string[], emit: (e: ProgressEvent
   const graph: Graph = { nodes: [...nodes.values()], links }
   emit({ event: 'progress', phase: 'done', nodes: graph.nodes.length, links: graph.links.length })
   return { graph, files, tsconfigs }
+}
+
+// arestas de import de UM arquivo (extrai + resolve os specifiers dele), reaproveitada
+// tanto pela análise inicial completa quanto pela atualização incremental de um arquivo só
+// (etapa 5: "recalcular os imports só daquele arquivo").
+export function importLinksForFile(root: string, abs: string, tsconfigs: TsConfigInfo[], nodes: Map<string, GraphNode>): GraphLink[] {
+  const fromId = toId(root, abs)
+  const lookup = nearestTsconfig(abs, tsconfigs)
+  const options = lookup.status === 'included' ? lookup.config.options : DEFAULT_OPTIONS
+
+  let source: string
+  try {
+    source = fs.readFileSync(abs, 'utf8')
+  } catch {
+    return []
+  }
+
+  return extractImports(source).map((imp) => toLink(root, fromId, imp, resolveImport(imp.specifier, abs, options), options, nodes))
 }
 
 function toLink(
@@ -111,7 +117,9 @@ function packageNode(nodes: Map<string, GraphNode>, name: string): string {
 
 // Tarjan: acha componentes fortemente conexos no grafo de imports entre arquivos e
 // marca `circular` nas arestas cujos dois lados caem no mesmo componente (tamanho > 1).
-function markCircular(fileEdges: { from: string; to: string }[], links: GraphLink[]) {
+// Exportada pra ser recalculada depois de uma atualização incremental (etapa 5), sobre o
+// conjunto atualizado de fileEdges/links mantido em memória.
+export function markCircular(fileEdges: { from: string; to: string }[], links: GraphLink[]) {
   const adj = new Map<string, string[]>()
   for (const e of fileEdges) {
     if (!adj.has(e.from)) adj.set(e.from, [])

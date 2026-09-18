@@ -3,8 +3,8 @@ import path from 'node:path'
 import ignore, { type Ignore } from 'ignore'
 import { ts } from 'ts-morph'
 
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git'])
-const SOURCE_EXT = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
+export const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git'])
+export const SOURCE_EXT = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
 export const WARN_FILE_COUNT = 5000
 
 export interface TsConfigInfo {
@@ -58,11 +58,18 @@ function nearestTsconfig(file: string, tsconfigs: TsConfigInfo[]): ConfigLookup 
   return nearestDir === undefined ? { status: 'no-config' } : { status: 'excluded' }
 }
 
-export function discoverFiles(root: string, excludePatterns: string[]): DiscoverResult {
+// escopo compartilhado com o watcher da atualização ao vivo (decisão 8, etapa 5): mesmo
+// .gitignore + --exclude usados aqui na descoberta inicial.
+export function buildIgnore(root: string, excludePatterns: string[]): Ignore {
   const ig: Ignore = ignore()
   const gitignorePath = path.join(root, '.gitignore')
   if (fs.existsSync(gitignorePath)) ig.add(fs.readFileSync(gitignorePath, 'utf8'))
   if (excludePatterns.length) ig.add(excludePatterns)
+  return ig
+}
+
+export function discoverFiles(root: string, excludePatterns: string[]): DiscoverResult {
+  const ig = buildIgnore(root, excludePatterns)
 
   const candidates: string[] = []
   const tsconfigPaths: string[] = []

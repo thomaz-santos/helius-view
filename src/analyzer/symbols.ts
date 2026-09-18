@@ -27,6 +27,12 @@ export function topLevelSymbolsOf(sf: SourceFile): SymbolEntry[] {
   return entries
 }
 
+// atualização ao vivo (etapa 5): arquivo mudou no disco, os símbolos de topo extraídos antes
+// não valem mais (linhas deslocadas, símbolo novo/removido).
+export function invalidateTopLevelCache(absPath: string): void {
+  topLevelCache.delete(absPath.replace(/\\/g, '/'))
+}
+
 function collectTopLevelSymbols(sf: SourceFile): SymbolEntry[] {
   const seen = new Map<string, SymbolEntry & { hasBody: boolean }>()
   const add = (node: Node, qualifiedName: string, kind: SymbolKind, hasBody: boolean) => {
@@ -116,6 +122,19 @@ function ensureAllProjectFiles(root: string, discovered: ReadonlySet<string>, ts
   if (allFilesEnsured) return
   for (const rel of discovered) ensureFile(path.resolve(root, rel), tsconfigs)
   allFilesEnsured = true
+}
+
+// atualização ao vivo (etapa 5): arquivo novo pode ser uma implementação de interface que
+// ainda não existia quando ensureAllProjectFiles rodou pela última vez; sem isso, um
+// call-possible novo só apareceria depois de reiniciar o servidor.
+export function resetAllFilesEnsured(): void {
+  allFilesEnsured = false
+}
+
+// arquivo mudou/foi apagado no disco: os símbolos de topo cacheados dele não valem mais.
+export function clearAllSymbolCaches(): void {
+  topLevelCache.clear()
+  allFilesEnsured = false
 }
 
 export type CallBucket = 'project' | 'external' | 'unresolved'
