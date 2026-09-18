@@ -24,14 +24,18 @@ function baseNodeColor(n: FGNode, folderColors: Map<string, string>): string {
 function baseLinkColor(l: FGLink): string {
   if (l.circular) return '#ef4444'
   if (l.unresolved) return '#f59e0b'
-  if (l.kind === 'import-type') return '#8b5cf6'
+  if (l.kind === 'import-type' || l.kind === 'reference') return '#8b5cf6'
   if (l.kind === 'import-dynamic') return '#0ea5e9'
-  return '#64748b'
+  if (l.kind === 'call-possible') return '#eab308'
+  if (l.kind === 'extends' || l.kind === 'implements') return '#14b8a6'
+  return '#64748b' // import, call
 }
 
 function linkDash(l: FGLink): number[] | null {
-  if (l.kind === 'import-type') return [2, 2]
+  if (l.kind === 'import-type' || l.kind === 'reference') return [2, 2]
   if (l.kind === 'import-dynamic') return [5, 3]
+  // call-possible tracejada (decisão 11: interface/abstrato -> possíveis implementações)
+  if (l.kind === 'call-possible') return [4, 4]
   if (l.unresolved) return [1, 3]
   return null
 }
@@ -47,9 +51,12 @@ export interface GraphViewProps {
   selected?: string
   highlightSet: Set<string> | null
   onSelect: (id: string | undefined) => void
+  onExpandFile?: (fileId: string) => void
 }
 
-export function GraphView({ graph, folderColors, selected, highlightSet, onSelect }: GraphViewProps) {
+const DBL_CLICK_MS = 400
+
+export function GraphView({ graph, folderColors, selected, highlightSet, onSelect, onExpandFile }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const fgRef = useRef<ForceGraph<FGNode, FGLink> | null>(null)
 
@@ -61,6 +68,9 @@ export function GraphView({ graph, folderColors, selected, highlightSet, onSelec
   const countsRef = useRef<Map<string, number>>(new Map())
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
+  const onExpandFileRef = useRef(onExpandFile)
+  onExpandFileRef.current = onExpandFile
+  const lastClickRef = useRef<{ id: string; time: number } | null>(null)
 
   useEffect(() => {
     const el = containerRef.current
@@ -87,7 +97,19 @@ export function GraphView({ graph, folderColors, selected, highlightSet, onSelec
       .linkLineDash(linkDash)
       .linkDirectionalArrowLength(4)
       .linkDirectionalArrowRelPos(1)
-      .onNodeClick((n) => onSelectRef.current(String(n.id)))
+      .onNodeClick((n) => {
+        const id = String(n.id)
+        const now = Date.now()
+        const last = lastClickRef.current
+        // force-graph não tem onNodeDblClick; detecta manualmente pelo intervalo entre cliques
+        if (last && last.id === id && now - last.time < DBL_CLICK_MS) {
+          lastClickRef.current = null
+          if (n.kind === 'file' && n.file) onExpandFileRef.current?.(n.file)
+          return
+        }
+        lastClickRef.current = { id, time: now }
+        onSelectRef.current(id)
+      })
       .onBackgroundClick(() => onSelectRef.current(undefined))
       .width(el.clientWidth)
       .height(el.clientHeight)
