@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Graph, GraphLink, GraphNode } from '../../src/shared/graph'
-import type { ProgressEvent } from '../../src/shared/protocol'
+import type { GraphPatch, ProgressEvent } from '../../src/shared/protocol'
 import type { SymbolDetail } from '../../src/shared/symbol'
 import { GraphView } from './GraphView'
 import { FolderTree } from './FolderTree'
@@ -9,7 +9,11 @@ import { SymbolPanel } from './SymbolPanel'
 import { buildTree, folderColorMap, isPathVisible, toggleFolder } from './lib/tree'
 import { collapseGraph, effectiveNodeId, filterGraph } from './lib/collapse'
 import { neighborhood } from './lib/neighborhood'
+import { applyGraphPatch } from './lib/patch'
 import { parseUrlState, serializeUrlState, type UrlState } from './lib/url'
+
+const RECONNECT_BASE_MS = 500
+const RECONNECT_MAX_MS = 10_000
 
 export function App() {
   const [graphBase, setGraphBase] = useState<Graph | null>(null)
@@ -22,10 +26,18 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [showTypes, setShowTypes] = useState(false)
   const [symbolDetail, setSymbolDetail] = useState<SymbolDetail | null>(null)
+  const [liveWarning, setLiveWarning] = useState<string | null>(null)
 
   const { sel: selected, externos: showExternal, depth, isolate } = urlState
   const uncheckedFolders = useMemo(() => new Set(urlState.unchecked), [urlState.unchecked])
   const collapsedFolders = useMemo(() => new Set(urlState.collapsed), [urlState.collapsed])
+
+  // lidas dentro do handler de graph:patch, que vive num efeito de montagem só (a conexão
+  // WS não pode ser recriada a cada re-render) — refs mantêm essas leituras "vivas"
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+  const expandedFilesRef = useRef(expandedFiles)
+  expandedFilesRef.current = expandedFiles
 
   useEffect(() => {
     fetch('/api/graph')
@@ -34,11 +46,76 @@ export function App() {
       .catch((e) => setError(String(e)))
   }, [])
 
+  // etapa 5: aplica o patch preservando o resto do estado do grafo (GraphView herda x/y/vx/vy
+  // por id quando `graph` muda); arquivo expandido invalidado recarrega símbolos, símbolo
+  // aberto no painel recarrega ou fecha com aviso se deixou de existir, seleção some se o nó
+  // selecionado foi removido.
+  const applyLivePatch = (patch: GraphPatch) => {
+    setGraphBase((prev) => (prev ? applyGraphPatch(prev, patch) : prev))
+
+    for (const fileId of patch.nodes.removed) {
+      setExpandedFiles((prev) => {
+        if (!prev.has(fileId)) return prev
+        const next = new Set(prev)
+        next.delete(fileId)
+        return next
+      })
+      setExtraNodes((prev) => prev.filter((n) => n.file !== fileId))
+      setExtraLinks((prev) => prev.filter((l) => !l.source.startsWith(`${fileId}#`)))
+    }
+
+    for (const fileId of patch.invalidated) {
+      if (expandedFilesRef.current.has(fileId)) reloadFileSymbols(fileId)
+    }
+
+    const sel = selectedRef.current
+    if (sel) {
+      const hash = sel.indexOf('#')
+      if (hash === -1) {
+        if (patch.nodes.removed.includes(sel)) setUrl({ sel: undefined })
+      } else if (patch.invalidated.includes(sel.slice(0, hash))) {
+        reloadSelectedSymbol(sel)
+      }
+    }
+  }
+  const applyLivePatchRef = useRef(applyLivePatch)
+  applyLivePatchRef.current = applyLivePatch
+
   useEffect(() => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/ws`)
-    ws.onmessage = (evt) => setProgress(JSON.parse(evt.data))
-    return () => ws.close()
+    let ws: WebSocket
+    let attempt = 0
+    let stopped = false
+
+    const connect = () => {
+      ws = new WebSocket(`${proto}://${location.host}/ws`)
+      ws.onopen = () => {
+        // reconexão (decisão 8): sem reenvio de mensagens perdidas, busca o grafo inteiro de novo
+        if (attempt > 0) {
+          fetch('/api/graph')
+            .then((r) => r.json() as Promise<Graph>)
+            .then(setGraphBase)
+            .catch(() => {})
+        }
+        attempt = 0
+      }
+      ws.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data)
+        if (msg.event === 'graph:patch') applyLivePatchRef.current(msg as GraphPatch)
+        else setProgress(msg)
+      }
+      ws.onclose = () => {
+        if (stopped) return
+        const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS)
+        attempt++
+        setTimeout(connect, delay)
+      }
+    }
+    connect()
+    return () => {
+      stopped = true
+      ws.close()
+    }
   }, [])
 
   // voltar/avançar do navegador navega entre seleções (sel usa pushState)
@@ -61,16 +138,23 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // sel muda -> pushState (o botão voltar navega entre seleções); resto -> replaceState
+  // sel muda -> pushState (o botão voltar navega entre seleções); resto -> replaceState.
+  // Atualização funcional (não fecha sobre `urlState`): o handler de graph:patch chama isso
+  // de dentro de um efeito de montagem só, onde `urlState` do closure ficaria obsoleto.
   const setUrl = (patch: Partial<UrlState>, push = false) => {
-    const next = { ...urlState, ...patch }
-    const url = serializeUrlState(next) || location.pathname
-    if (push) history.pushState(null, '', url)
-    else history.replaceState(null, '', url)
-    setUrlState(next)
+    setUrlState((cur) => {
+      const next = { ...cur, ...patch }
+      const url = serializeUrlState(next) || location.pathname
+      if (push) history.pushState(null, '', url)
+      else history.replaceState(null, '', url)
+      return next
+    })
   }
 
-  const select = (id: string | undefined) => setUrl({ sel: id }, true)
+  const select = (id: string | undefined) => {
+    setLiveWarning(null)
+    setUrl({ sel: id }, true)
+  }
 
   // navega pra um símbolo (id caminho#nome) clicado numa chamada: expande o arquivo dono
   // primeiro se ainda não tiver sido expandido, senão o nó de destino nem existe no grafo
@@ -80,15 +164,36 @@ export function App() {
     select(id)
   }
 
-  // nível 2 sob demanda (decisão 2): expandir um arquivo carrega seus símbolos no grafo
-  const expandFile = (fileId: string) => {
-    if (expandedFiles.has(fileId)) return
-    setExpandedFiles((prev) => new Set(prev).add(fileId))
+  // busca os símbolos de um arquivo e substitui as entradas anteriores dele em
+  // extraNodes/extraLinks — usada tanto pra expandir (nível 2, decisão 2) quanto pra
+  // recarregar um arquivo expandido invalidado por uma atualização ao vivo (etapa 5)
+  const reloadFileSymbols = (fileId: string) => {
     fetch(`/api/symbols?file=${encodeURIComponent(fileId)}`)
       .then((r) => (r.ok ? (r.json() as Promise<Graph>) : { nodes: [], links: [] }))
       .then((g) => {
-        setExtraNodes((prev) => [...prev, ...g.nodes])
-        setExtraLinks((prev) => [...prev, ...g.links])
+        setExtraNodes((prev) => [...prev.filter((n) => n.file !== fileId), ...g.nodes])
+        setExtraLinks((prev) => [...prev.filter((l) => !l.source.startsWith(`${fileId}#`)), ...g.links])
+      })
+  }
+
+  const expandFile = (fileId: string) => {
+    if (expandedFiles.has(fileId)) return
+    setExpandedFiles((prev) => new Set(prev).add(fileId))
+    reloadFileSymbols(fileId)
+  }
+
+  // símbolo aberto no painel foi invalidado por uma atualização ao vivo (etapa 5): recarrega
+  // os cinco blocos, ou fecha o painel com aviso se o símbolo deixou de existir
+  const reloadSelectedSymbol = (symId: string) => {
+    fetch(`/api/symbol?id=${encodeURIComponent(symId)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<SymbolDetail>) : null))
+      .then((d) => {
+        if (d) {
+          setSymbolDetail(d)
+        } else {
+          setLiveWarning(`símbolo removido: ${symId}`)
+          setUrl({ sel: undefined })
+        }
       })
   }
 
@@ -190,6 +295,7 @@ export function App() {
         {indexing && <span style={{ color: '#6b7280' }}>indexando símbolos… {progress.done}/{progress.total}</span>}
         {progress?.phase === 'discover' && progress.warning && <span style={{ color: '#f59e0b' }}>{progress.warning}</span>}
         {error && <span style={{ color: '#ef4444' }}>{error}</span>}
+        {liveWarning && <span style={{ color: '#f59e0b' }}>{liveWarning}</span>}
       </header>
       {!done && (
         <div style={{ height: 4, background: '#1a2230' }}>
