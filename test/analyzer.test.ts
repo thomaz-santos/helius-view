@@ -70,3 +70,35 @@ describe('import não resolvido', () => {
     expect(l?.target).toContain('does-not-exist')
   })
 })
+
+describe('tsconfig solution style (vite)', () => {
+  it('segue projectReferences em vez de descartar tudo por fileNames vazio', () => {
+    const graph = run('vite-like')
+    expect(link(graph, 'src/main.ts', 'src/util.ts')).toBeDefined()
+    const vc = graph.nodes.find((n) => n.id === 'vite.config.ts')
+    expect(vc).toBeDefined()
+  })
+})
+
+describe('classify(): import type multi-linha e require()', () => {
+  it('import type quebrado em várias linhas continua import-type', () => {
+    const graph = run('classify')
+    const l = link(graph, 'a.ts', 'types.ts')
+    expect(l?.kind).toBe('import-type')
+  })
+
+  it('require() é import, não import-dynamic', () => {
+    const graph = run('classify')
+    const l = link(graph, 'a.ts', 'mod.ts')
+    expect(l?.kind).toBe('import')
+  })
+})
+
+describe('alias quebrado', () => {
+  it('specifier que bate com paths mas não resolve vira unresolved, não pkg:', () => {
+    const graph = run('broken-alias')
+    const l = graph.links.find((entry) => entry.source === 'src/entry.ts')
+    expect(l?.unresolved).toBe(true)
+    expect(l?.target).not.toMatch(/^pkg:/)
+  })
+})
