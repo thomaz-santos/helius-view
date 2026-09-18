@@ -4,6 +4,20 @@
   "description": "Visualização 2D e 3D de codebases TS/JS: dependências, chamadas e entrada/saída de funções",
   "license": "MIT",
   "type": "module",
+  "author": "Thomaz Vieira dos Santos",
+  "homepage": "https://github.com/thomaz-santos/helius-view#readme",
+  "bugs": {
+    "url": "https://github.com/thomaz-santos/helius-view/issues"
+  },
+  "keywords": [
+    "codebase",
+    "graph",
+    "visualization",
+    "typescript",
+    "dependency-graph",
+    "call-graph",
+    "cli"
+  ],
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/thomaz-santos/helius-view.git"
