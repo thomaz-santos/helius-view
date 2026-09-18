@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { createNodeWebSocket } from '@hono/node-ws'
 import { startAnalyzer } from './analyzer'
+import { watchRoot } from './watch'
 import type { PingResult, ProgressEvent } from '../shared/protocol'
 import type { Graph } from '../shared/graph'
 import type { SearchResult, SymbolDetail } from '../shared/symbol'
@@ -72,9 +73,17 @@ export async function startServer(root: string, port: number, exclude: string[] 
   )
 
   // último evento de progresso, pra quem conectar no WS depois da análise já ter avançado
+  // (um graph:patch nunca vira lastProgress: é um delta, sem sentido pra quem conecta agora
+  // — o front busca /api/graph inteiro na primeira carga)
   let lastProgress: ProgressEvent | undefined
   analyzer.onProgress((e) => {
-    lastProgress = e
+    if (e.event === 'progress') lastProgress = e
+  })
+
+  // atualização ao vivo (decisão 8, etapa 5): observa a raiz e manda os arquivos alterados
+  // pra worker, que devolve um graph:patch empurrado pelo mesmo canal de progresso
+  watchRoot(root, exclude, (changes) => {
+    void analyzer.request({ type: 'filesChanged', changes }).catch((e) => console.error('atualização ao vivo falhou:', e))
   })
 
   app.get(

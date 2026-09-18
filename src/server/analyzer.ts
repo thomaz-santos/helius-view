@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads'
-import type { AnalyzerRequestBody, ProgressEvent, WorkerMessage } from '../shared/protocol'
+import type { AnalyzerRequestBody, WorkerMessage, WorkerPush } from '../shared/protocol'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void }
 
@@ -7,7 +7,8 @@ export function startAnalyzer(root: string, exclude: string[] = []) {
   // worker.js fica ao lado de cli.js em dist/ (entrada separada no tsup)
   const worker = new Worker(new URL('./worker.js', import.meta.url), { workerData: { root, exclude } })
   const pending = new Map<number, Pending>()
-  const progressListeners = new Set<(e: ProgressEvent) => void>()
+  // progresso da análise inicial e graph:patch da atualização ao vivo passam pelo mesmo canal
+  const progressListeners = new Set<(e: WorkerPush) => void>()
   let nextId = 1
 
   worker.on('message', (msg: WorkerMessage) => {
@@ -35,7 +36,7 @@ export function startAnalyzer(root: string, exclude: string[] = []) {
         worker.postMessage({ ...req, id })
       })
     },
-    onProgress(fn: (e: ProgressEvent) => void): () => void {
+    onProgress(fn: (e: WorkerPush) => void): () => void {
       progressListeners.add(fn)
       return () => progressListeners.delete(fn)
     },
