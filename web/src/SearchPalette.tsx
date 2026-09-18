@@ -1,24 +1,35 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { searchFiles } from './lib/search'
+import { useEffect, useRef, useState } from 'react'
+import type { SearchResult } from '../../src/shared/symbol'
 
 interface SearchPaletteProps {
-  fileIds: string[]
-  onSelect: (fileId: string) => void
+  onSelect: (id: string) => void
   onClose: () => void
 }
 
-export function SearchPalette({ fileIds, onSelect, onClose }: SearchPaletteProps) {
+// decisão 12: índice de nomes (arquivos + símbolos) em segundo plano no servidor; a busca
+// aqui só manda a query pra /api/search, que já devolve ranqueado.
+export function SearchPalette({ onSelect, onClose }: SearchPaletteProps) {
   const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SearchResult[]>([])
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const results = useMemo(() => searchFiles(fileIds, query, 20), [fileIds, query])
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/search?q=${encodeURIComponent(query)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<SearchResult[]>) : []))
+      .then((r) => !cancelled && setResults(r))
+      .catch(() => !cancelled && setResults([]))
+    return () => {
+      cancelled = true
+    }
+  }, [query])
 
-  useEffect(() => setActive(0), [query])
+  useEffect(() => setActive(0), [results])
   useEffect(() => inputRef.current?.focus(), [])
 
-  const pick = (id: string | undefined) => {
-    if (id) onSelect(id)
+  const pick = (r: SearchResult | undefined) => {
+    if (r) onSelect(r.id)
   }
 
   return (
@@ -34,7 +45,7 @@ export function SearchPalette({ fileIds, onSelect, onClose }: SearchPaletteProps
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="buscar arquivo…"
+          placeholder="buscar arquivo ou símbolo…"
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') {
               e.preventDefault()
@@ -51,14 +62,15 @@ export function SearchPalette({ fileIds, onSelect, onClose }: SearchPaletteProps
           style={{ padding: 10, background: 'transparent', border: 'none', borderBottom: '1px solid #263041', color: '#e2e8f0', fontSize: 14, outline: 'none' }}
         />
         <div style={{ overflow: 'auto' }}>
-          {results.map((id, i) => (
+          {results.map((r, i) => (
             <div
-              key={id}
+              key={r.id}
               onMouseEnter={() => setActive(i)}
-              onClick={() => pick(id)}
-              style={{ padding: '6px 10px', background: i === active ? '#1e3a5f' : undefined, cursor: 'pointer', fontSize: 13 }}
+              onClick={() => pick(r)}
+              style={{ padding: '6px 10px', background: i === active ? '#1e3a5f' : undefined, cursor: 'pointer', fontSize: 13, display: 'flex', gap: 8 }}
             >
-              {id}
+              <span style={{ color: '#6b7280', minWidth: 56 }}>{r.kind}</span>
+              <span>{r.kind === 'file' ? r.id : `${r.name} — ${r.file}`}</span>
             </div>
           ))}
           {results.length === 0 && <div style={{ padding: 10, color: '#6b7280' }}>nada encontrado</div>}
