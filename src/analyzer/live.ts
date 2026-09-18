@@ -1,18 +1,19 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { nearestTsconfig, type TsConfigInfo } from './discover'
+import { isTsconfigLike, nearestTsconfig, type TsConfigInfo } from './discover'
 import { importLinksForFile, markCircular, toId } from './graph'
 import type { Graph, GraphLink, GraphNode } from '../shared/graph'
 import type { FileChange } from '../shared/protocol'
 
-// tsconfig.json ou .gitignore mudou: o escopo descoberto e/ou as compilerOptions podem ter
-// mudado de um jeito que uma atualização incremental não capturaria direito (arquivo que
-// passou a ser incluído/excluído por um path novo, alias novo, etc) — reanálise completa é
-// o caminho simples e correto aqui.
+// qualquer tsconfig*.json (inclui os referenciados por solution style: tsconfig.app.json,
+// tsconfig.node.json etc — decisão 9) ou .gitignore mudou: o escopo descoberto e/ou as
+// compilerOptions podem ter mudado de um jeito que uma atualização incremental não
+// capturaria direito (arquivo que passou a ser incluído/excluído, alias novo, etc) —
+// reanálise completa é o caminho simples e correto aqui.
 export function needsFullReanalysis(changes: FileChange[]): boolean {
   return changes.some((c) => {
     const base = c.file.slice(c.file.lastIndexOf('/') + 1)
-    return base === 'tsconfig.json' || base === '.gitignore'
+    return isTsconfigLike(base) || base === '.gitignore'
   })
 }
 

@@ -7,6 +7,14 @@ export const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git'])
 export const SOURCE_EXT = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'])
 export const WARN_FILE_COUNT = 5000
 
+// tsconfig.json E qualquer config referenciado por ele (solution style: tsconfig.app.json,
+// tsconfig.node.json etc — ver parseTsconfig). Usado tanto pelo watcher quanto pela worker
+// pra decidir quando um arquivo alterado exige reanálise completa em vez de incremental.
+const TSCONFIG_LIKE = /^tsconfig(\.[^./]+)?\.json$/
+export function isTsconfigLike(basename: string): boolean {
+  return TSCONFIG_LIKE.test(basename)
+}
+
 export interface TsConfigInfo {
   dir: string
   options: ts.CompilerOptions

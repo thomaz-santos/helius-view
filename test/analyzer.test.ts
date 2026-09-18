@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { analyze } from '../src/analyzer/graph'
-import { discoverFiles } from '../src/analyzer/discover'
+import { discoverFiles, isTsconfigLike } from '../src/analyzer/discover'
 
 const fixture = (name: string) => path.join(import.meta.dirname, 'fixtures', name)
 const run = (name: string) => analyze(fixture(name), [], () => {}).graph
@@ -91,6 +91,20 @@ describe('classify(): import type multi-linha e require()', () => {
     const graph = run('classify')
     const l = link(graph, 'a.ts', 'mod.ts')
     expect(l?.kind).toBe('import')
+  })
+})
+
+describe('isTsconfigLike()', () => {
+  it('bate com tsconfig.json e configs solution style referenciados', () => {
+    expect(isTsconfigLike('tsconfig.json')).toBe(true)
+    expect(isTsconfigLike('tsconfig.app.json')).toBe(true)
+    expect(isTsconfigLike('tsconfig.node.json')).toBe(true)
+  })
+
+  it('não bate com jsconfig.json nem tsconfig.ts', () => {
+    expect(isTsconfigLike('jsconfig.json')).toBe(false)
+    expect(isTsconfigLike('tsconfig.ts')).toBe(false)
+    expect(isTsconfigLike('mytsconfig.json')).toBe(false)
   })
 })
 

@@ -95,6 +95,13 @@ describe('atualização ao vivo: patch de nível 1', () => {
     expect(needsFullReanalysis([{ file: '.gitignore', type: 'change' }])).toBe(true)
     expect(needsFullReanalysis([{ file: 'src/a.ts', type: 'change' }])).toBe(false)
   })
+
+  it('qualquer tsconfig*.json força reanálise completa (solution style: app/node/build)', () => {
+    expect(needsFullReanalysis([{ file: 'tsconfig.app.json', type: 'change' }])).toBe(true)
+    expect(needsFullReanalysis([{ file: 'packages/a/tsconfig.node.json', type: 'add' }])).toBe(true)
+    expect(needsFullReanalysis([{ file: 'jsconfig.json', type: 'change' }])).toBe(false)
+    expect(needsFullReanalysis([{ file: 'src/tsconfig.ts', type: 'change' }])).toBe(false)
+  })
 })
 
 describe('atualização ao vivo: estabilidade de id no nível 2', () => {

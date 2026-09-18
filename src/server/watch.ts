@@ -1,13 +1,13 @@
 import path from 'node:path'
 import chokidar from 'chokidar'
-import { buildIgnore, SKIP_DIRS, SOURCE_EXT } from '../analyzer/discover'
+import { buildIgnore, isTsconfigLike, SKIP_DIRS, SOURCE_EXT } from '../analyzer/discover'
 import type { FileChange, FileChangeType } from '../shared/protocol'
 
 const DEBOUNCE_MS = 300
 
 function isWatchedPath(rel: string): boolean {
   const base = path.basename(rel)
-  if (base === 'tsconfig.json' || base === '.gitignore') return true
+  if (isTsconfigLike(base) || base === '.gitignore') return true
   return SOURCE_EXT.has(path.extname(rel))
 }
 
