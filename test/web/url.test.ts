@@ -10,11 +10,17 @@ describe('parseUrlState', () => {
       collapsed: [],
       depth: DEFAULT_DEPTH,
       isolate: false,
+      mode: '2d',
+      pathFrom: undefined,
+      pathTo: undefined,
+      pathUndirected: false,
     })
   })
 
   it('lê todos os campos', () => {
-    const state = parseUrlState('?sel=src%2Fa.ts&externos=1&unchecked=web%2Fsrc&collapsed=src%2Finner&depth=4&isolate=1')
+    const state = parseUrlState(
+      '?sel=src%2Fa.ts&externos=1&unchecked=web%2Fsrc&collapsed=src%2Finner&depth=4&isolate=1&mode=3d&pathFrom=a.ts&pathTo=b.ts&pathUndirected=1',
+    )
     expect(state).toEqual({
       sel: 'src/a.ts',
       externos: true,
@@ -22,6 +28,10 @@ describe('parseUrlState', () => {
       collapsed: ['src/inner'],
       depth: 4,
       isolate: true,
+      mode: '3d',
+      pathFrom: 'a.ts',
+      pathTo: 'b.ts',
+      pathUndirected: true,
     })
   })
 
@@ -30,11 +40,19 @@ describe('parseUrlState', () => {
     expect(parseUrlState('?depth=0').depth).toBe(DEFAULT_DEPTH)
     expect(parseUrlState('?depth=abc').depth).toBe(DEFAULT_DEPTH)
   })
+
+  it('mode inválido ou ausente cai pra 2d', () => {
+    expect(parseUrlState('').mode).toBe('2d')
+    expect(parseUrlState('?mode=vr').mode).toBe('2d')
+    expect(parseUrlState('?mode=3d').mode).toBe('3d')
+  })
 })
 
 describe('serializeUrlState', () => {
   it('omite campos no valor padrão', () => {
-    expect(serializeUrlState({ externos: false, unchecked: [], collapsed: [], depth: DEFAULT_DEPTH, isolate: false })).toBe('')
+    expect(
+      serializeUrlState({ externos: false, unchecked: [], collapsed: [], depth: DEFAULT_DEPTH, isolate: false, mode: '2d', pathUndirected: false }),
+    ).toBe('')
   })
 
   it('ida e volta preserva o estado', () => {
@@ -45,6 +63,10 @@ describe('serializeUrlState', () => {
       collapsed: ['src/inner'],
       depth: 5,
       isolate: true,
+      mode: '3d' as const,
+      pathFrom: 'a.ts',
+      pathTo: 'b.ts',
+      pathUndirected: true,
     }
     expect(parseUrlState(serializeUrlState(state))).toEqual(state)
   })
