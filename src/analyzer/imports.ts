@@ -24,11 +24,27 @@ export function extractImports(source: string): RawImport[] {
 function classify(source: string, quotePos: number): EdgeKind {
   let i = quotePos - 1
   while (i >= 0 && /\s/.test(source[i]!)) i--
-  if (source[i] === '(') return 'import-dynamic'
 
-  const lineStart = source.lastIndexOf('\n', quotePos) + 1
-  const stmt = source.slice(lineStart, quotePos)
-  if (/\b(import|export)\s+type\b/.test(stmt)) return 'import-type'
+  if (source[i] === '(') {
+    // dynamic import só conta se o token antes de "(" for "import" — require() também
+    // termina em "(especificador)" mas não é dynamic, é um import comum.
+    let j = i - 1
+    while (j >= 0 && /\s/.test(source[j]!)) j--
+    let k = j
+    while (k >= 0 && /\w/.test(source[k]!)) k--
+    if (source.slice(k + 1, j + 1) === 'import') return 'import-dynamic'
+  }
+
+  // procura pra trás a última palavra-chave import/export antes da aspa (não só a linha
+  // atual: import type multi-linha do prettier quebra "import type {" e "} from '...'"),
+  // mas nunca atravessando uma aspa anterior — ela fecha o especificador de uma
+  // declaração import/export-from já terminada (ex.: um require() logo depois de
+  // "... from './x'" não pode herdar o "import type" daquela declaração anterior).
+  const prevQuote = Math.max(source.lastIndexOf("'", quotePos - 1), source.lastIndexOf('"', quotePos - 1))
+  const prefix = source.slice(prevQuote + 1, quotePos)
+  const keyword = [...prefix.matchAll(/\b(?:import|export)\b/g)].at(-1)
+  if (keyword && /^(?:import|export)\s+type\b/.test(prefix.slice(keyword.index))) return 'import-type'
+
   return 'import'
 }
 
