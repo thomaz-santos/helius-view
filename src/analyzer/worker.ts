@@ -1,12 +1,15 @@
 import { parentPort, workerData } from 'node:worker_threads'
-import type { AnalyzerRequest, AnalyzerResponse, PingResult } from '../shared/protocol'
+import type { AnalyzerRequest, AnalyzerResponse, PingResult, ProgressEvent } from '../shared/protocol'
+import { analyze } from './graph'
 
-const { root } = workerData as { root: string }
+const { root, exclude } = workerData as { root: string; exclude: string[] }
 
 function handle(req: AnalyzerRequest): unknown {
   switch (req.type) {
     case 'ping':
       return { pong: true, root } satisfies PingResult
+    case 'graph':
+      return analyze(root, exclude, (e: ProgressEvent) => parentPort!.postMessage(e))
   }
 }
 
