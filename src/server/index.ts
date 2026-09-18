@@ -15,6 +15,32 @@ export async function startServer(root: string, port: number, exclude: string[] 
   const app = new Hono()
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 
+  // contra DNS rebinding: só aceita Host 127.0.0.1/localhost na porta em que o servidor
+  // está de fato escutando (atualizada por listen() se cair pro fallback de porta)
+  let actualPort = port
+  const isAllowedHost = (host: string | undefined) =>
+    host === `127.0.0.1:${actualPort}` || host === `localhost:${actualPort}`
+
+  app.use('*', async (c, next) => {
+    if (!isAllowedHost(c.req.header('host'))) return c.text('forbidden', 403)
+    return next()
+  })
+
+  // navegador sempre manda Origin no handshake do WS; se vier, tem que ser um host permitido
+  app.use('/ws', async (c, next) => {
+    const origin = c.req.header('origin')
+    if (origin) {
+      let originHost: string | undefined
+      try {
+        originHost = new URL(origin).host
+      } catch {
+        originHost = undefined
+      }
+      if (!isAllowedHost(originHost)) return c.text('forbidden', 403)
+    }
+    return next()
+  })
+
   app.get('/api/ping', async (c) => c.json(await analyzer.request<PingResult>({ type: 'ping' })))
 
   // dispara a análise assim que o servidor sobe; GET /api/graph e /ws reaproveitam a mesma
@@ -49,7 +75,10 @@ export async function startServer(root: string, port: number, exclude: string[] 
 
   const listen = (p: number): Promise<number> =>
     new Promise((resolve, reject) => {
-      const server = serve({ fetch: app.fetch, port: p, hostname: '127.0.0.1' }, (info) => resolve(info.port))
+      const server = serve({ fetch: app.fetch, port: p, hostname: '127.0.0.1' }, (info) => {
+        actualPort = info.port
+        resolve(info.port)
+      })
       injectWebSocket(server)
       server.once('error', (e: NodeJS.ErrnoException) => {
         if (e.code === 'EADDRINUSE' && p < port + MAX_PORT_TRIES - 1) resolve(listen(p + 1))
