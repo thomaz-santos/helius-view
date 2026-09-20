@@ -1,6 +1,6 @@
 {
   "name": "helius-view",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Visualização 2D e 3D de codebases TS/JS: dependências, chamadas e entrada/saída de funções",
   "license": "MIT",
   "type": "module",
